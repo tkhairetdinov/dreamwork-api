@@ -2,7 +2,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// MVP in-memory store (best-effort; can be replaced with Vercel KV later)
+// MVP in-memory store (best-effort; OK for early testing)
 globalThis.__DW_STORE__ = globalThis.__DW_STORE__ || new Map();
 
 function putSession(data) {
@@ -14,7 +14,9 @@ function putSession(data) {
 function cleanup() {
   const now = Date.now();
   for (const [sid, v] of globalThis.__DW_STORE__.entries()) {
-    if (now - v.ts > 30 * 60 * 1000) globalThis.__DW_STORE__.delete(sid);
+    if (now - v.ts > 30 * 60 * 1000) {
+      globalThis.__DW_STORE__.delete(sid);
+    }
   }
 }
 
@@ -28,10 +30,10 @@ async function readUrlEncodedBody(req) {
 }
 
 export default async function handler(req, res) {
-  // CORS not required for classic form POST, but harmless for MVP
+  // Allow fetch from the site (Embed). Classic form POST is also fine.
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, X-Requested-With");
 
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).send("Method not allowed");
@@ -45,12 +47,12 @@ export default async function handler(req, res) {
     if (dream.length < 40) {
       return res
         .status(400)
-        .send("Dream text is too short. Please add a few more sentences.");
+        .json({ error: "Dream text is too short. Please add a few more sentences." });
     }
 
     const prompt = `
 You are DreamWork AI: an evidence-informed assistant for gentle psychological dream reflection.
-Your job is NOT to decode or impose meaning, but to offer 3 testable lines of meaning the user can check by inner resonance.
+Your task is NOT to decode or impose meaning, but to offer 3 possible lines of meaning the user can check by inner resonance.
 
 Hard rules:
 - Analyze ONLY the dream text provided below. Do not use memory, history, or external context.
@@ -61,17 +63,18 @@ Hard rules:
 - Tone: calm, clear, human, non-dogmatic. Use soft modality (“maybe”, “it could be”, “it seems”).
 - Forbidden: certainty claims (“this definitely means”), universal symbol dictionaries, esotericism/fortune-telling, diagnosis.
 
-Output:
+Output requirements:
 - Produce EXACTLY 3 lines.
-- Each line must have:
-  1) title: 2–5 words (same language as the dream)
+- Each line must include:
+  1) title: 2–5 words (same language as the dream),
   2) body: ONE single paragraph (4–7 sentences) in a calm existential style.
 - The body MUST include:
   - an “inner phrase” in first person (7–14 words),
   - grounding in TWO concrete dream details.
 - No bullet points. No lists.
 
-Return ONLY valid JSON in the exact schema below. No markdown. No extra keys.
+Return ONLY valid JSON in the exact schema below.
+No markdown. No extra keys.
 {
   "lines": [
     { "id": "L1", "title": "string", "body": "string" },
@@ -102,11 +105,9 @@ ${dream}
       created_at: new Date().toISOString(),
     });
 
-    // Redirect user to the Framer page
-    res.statusCode = 302;
-    res.setHeader("Location", `/insights?sid=${encodeURIComponent(sid)}`);
-    return res.end();
+    // Always return JSON for fetch-based flow
+    return res.status(200).json({ sid });
   } catch (e) {
-    return res.status(500).send(e?.message || "Server error");
+    return res.status(500).json({ error: e?.message || "Server error" });
   }
 }
